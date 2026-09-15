@@ -11,6 +11,42 @@ export interface PickupInstance {
 export class PickupManager {
   private scene: THREE.Scene;
   private pickups: PickupInstance[] = [];
+  public enableLights: boolean = false; // Disabled by default for mobile performance
+
+  // Cached Geometries to prevent memory allocations on every drop
+  private boxMedkitGeo = new THREE.BoxGeometry(0.45, 0.3, 0.25);
+  private barVGeo = new THREE.PlaneGeometry(0.08, 0.22);
+  private barHGeo = new THREE.PlaneGeometry(0.22, 0.08);
+  private ammoBoxGeo = new THREE.BoxGeometry(0.42, 0.26, 0.2);
+  private ammoStripeGeo = new THREE.BoxGeometry(0.43, 0.06, 0.21);
+  private plateGeo = new THREE.BoxGeometry(0.4, 0.45, 0.12);
+  private cashGeo = new THREE.BoxGeometry(0.3, 0.15, 0.2);
+  private cogGeo = new THREE.CylinderGeometry(0.2, 0.2, 0.1, 8);
+  private scrapChunkGeo = new THREE.BoxGeometry(0.28, 0.08, 0.12);
+  private boardGeo = new THREE.BoxGeometry(0.35, 0.04, 0.3);
+  private cylinderGeo = new THREE.CylinderGeometry(0.12, 0.14, 0.38, 8);
+  private partsBoxGeo = new THREE.BoxGeometry(0.45, 0.18, 0.22);
+  private tubeGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.5, 8);
+  private tubeCapGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.08, 8);
+
+  // Cached Materials
+  private medkitMat = new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.4 });
+  private crossMat = new THREE.MeshBasicMaterial({ color: 0xee2222 });
+  private ammoBoxMat = new THREE.MeshStandardMaterial({ color: 0x3d4e32, roughness: 0.6, metalness: 0.3 });
+  private ammoStripeMat = new THREE.MeshBasicMaterial({ color: 0xeebb22 });
+  private armorMat = new THREE.MeshStandardMaterial({ color: 0x1d3557, roughness: 0.3, metalness: 0.7 });
+  private cashMat = new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.5 });
+  private scrapMat1 = new THREE.MeshStandardMaterial({ color: 0x8a7051, metalness: 0.85, roughness: 0.4 });
+  private scrapMat2 = new THREE.MeshStandardMaterial({ color: 0x4a4a4a, metalness: 0.9, roughness: 0.3 });
+  private elecBoardMat = new THREE.MeshStandardMaterial({ color: 0x064e3b, roughness: 0.3 });
+  private elecChipMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+  private chemMat = new THREE.MeshStandardMaterial({ color: 0x84cc16, roughness: 0.2, metalness: 0.1 });
+  private chemCapMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.8, roughness: 0.2 });
+  private partsMat1 = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.8, roughness: 0.3 });
+  private partsMat2 = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+  private bpTubeMat = new THREE.MeshStandardMaterial({ color: 0x1e3a8a, roughness: 0.3, metalness: 0.4 });
+  private bpCapMat = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.9, roughness: 0.2 });
+  private bpRingMat = new THREE.MeshBasicMaterial({ color: 0x60a5fa });
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -21,173 +57,108 @@ export class PickupManager {
     group.position.set(position.x, position.y + 0.35, position.z);
 
     if (type === 'health') {
-      // White medkit with red cross
-      const box = new THREE.Mesh(
-        new THREE.BoxGeometry(0.45, 0.3, 0.25),
-        new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.4 })
-      );
+      const box = new THREE.Mesh(this.boxMedkitGeo, this.medkitMat);
       group.add(box);
 
-      const crossMat = new THREE.MeshBasicMaterial({ color: 0xee2222 });
-      const barV = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.22), crossMat);
+      const barV = new THREE.Mesh(this.barVGeo, this.crossMat);
       barV.position.set(0, 0, 0.13);
       group.add(barV);
 
-      const barH = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 0.08), crossMat);
+      const barH = new THREE.Mesh(this.barHGeo, this.crossMat);
       barH.position.set(0, 0, 0.13);
       group.add(barH);
 
-      const light = new THREE.PointLight(0x00ff88, 0.8, 3);
-      group.add(light);
-
+      if (this.enableLights) {
+        group.add(new THREE.PointLight(0x00ff88, 0.6, 2.5));
+      }
     } else if (type === 'ammo') {
-      // Green military ammo box
-      const ammoBox = new THREE.Mesh(
-        new THREE.BoxGeometry(0.42, 0.26, 0.2),
-        new THREE.MeshStandardMaterial({ color: 0x3d4e32, roughness: 0.6, metalness: 0.3 })
-      );
+      const ammoBox = new THREE.Mesh(this.ammoBoxGeo, this.ammoBoxMat);
       group.add(ammoBox);
 
-      // Yellow text / stripe
-      const stripe = new THREE.Mesh(
-        new THREE.BoxGeometry(0.43, 0.06, 0.21),
-        new THREE.MeshBasicMaterial({ color: 0xeebb22 })
-      );
+      const stripe = new THREE.Mesh(this.ammoStripeGeo, this.ammoStripeMat);
       group.add(stripe);
 
-      const light = new THREE.PointLight(0xffdd44, 0.8, 3);
-      group.add(light);
-
+      if (this.enableLights) {
+        group.add(new THREE.PointLight(0xffdd44, 0.6, 2.5));
+      }
     } else if (type === 'armor') {
-      // Blue armor vest plate
-      const plate = new THREE.Mesh(
-        new THREE.BoxGeometry(0.4, 0.45, 0.12),
-        new THREE.MeshStandardMaterial({ color: 0x1d3557, roughness: 0.3, metalness: 0.7 })
-      );
+      const plate = new THREE.Mesh(this.plateGeo, this.armorMat);
       group.add(plate);
 
-      const light = new THREE.PointLight(0x38bdf8, 0.8, 3);
-      group.add(light);
-
+      if (this.enableLights) {
+        group.add(new THREE.PointLight(0x38bdf8, 0.6, 2.5));
+      }
     } else if (type === 'cash') {
-      // Stack of cash / currency
-      const stack = new THREE.Mesh(
-        new THREE.BoxGeometry(0.3, 0.15, 0.2),
-        new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.5 })
-      );
+      const stack = new THREE.Mesh(this.cashGeo, this.cashMat);
       group.add(stack);
 
-      const light = new THREE.PointLight(0x22c55e, 0.8, 3);
-      group.add(light);
-
+      if (this.enableLights) {
+        group.add(new THREE.PointLight(0x22c55e, 0.6, 2.5));
+      }
     } else if (type === 'scrap') {
-      // Mechanical scrap metal cog and salvaged beams
-      const cog = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.2, 0.2, 0.1, 8),
-        new THREE.MeshStandardMaterial({ color: 0x8a7051, metalness: 0.85, roughness: 0.4 })
-      );
+      const cog = new THREE.Mesh(this.cogGeo, this.scrapMat1);
       cog.rotation.x = Math.PI / 4;
       group.add(cog);
 
-      const scrapChunk = new THREE.Mesh(
-        new THREE.BoxGeometry(0.28, 0.08, 0.12),
-        new THREE.MeshStandardMaterial({ color: 0x4a4a4a, metalness: 0.9, roughness: 0.3 })
-      );
+      const scrapChunk = new THREE.Mesh(this.scrapChunkGeo, this.scrapMat2);
       scrapChunk.position.set(0.06, 0.05, 0);
       group.add(scrapChunk);
 
-      const light = new THREE.PointLight(0xf59e0b, 0.9, 3.5);
-      group.add(light);
-
+      if (this.enableLights) {
+        group.add(new THREE.PointLight(0xf59e0b, 0.6, 2.5));
+      }
     } else if (type === 'electronics') {
-      // Circuit board wafer with microchip
-      const board = new THREE.Mesh(
-        new THREE.BoxGeometry(0.32, 0.04, 0.24),
-        new THREE.MeshStandardMaterial({ color: 0x065f46, roughness: 0.3 })
-      );
+      const board = new THREE.Mesh(this.boardGeo, this.elecBoardMat);
       group.add(board);
 
-      const chip = new THREE.Mesh(
-        new THREE.BoxGeometry(0.12, 0.05, 0.12),
-        new THREE.MeshStandardMaterial({ color: 0x111827, metalness: 0.8, roughness: 0.2 })
-      );
-      chip.position.y = 0.03;
+      const chip = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.06, 0.12), this.elecChipMat);
+      chip.position.set(0, 0.04, 0);
       group.add(chip);
 
-      const light = new THREE.PointLight(0x06b6d4, 1.0, 3.5);
-      group.add(light);
-
+      if (this.enableLights) {
+        group.add(new THREE.PointLight(0x10b981, 0.6, 2.5));
+      }
     } else if (type === 'chemicals') {
-      // Glowing chemical solvent canister
-      const vial = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.09, 0.09, 0.3, 12),
-        new THREE.MeshStandardMaterial({ color: 0xa3e635, emissive: 0x4d7c0f, emissiveIntensity: 0.6, roughness: 0.2 })
-      );
-      group.add(vial);
+      const bottle = new THREE.Mesh(this.cylinderGeo, this.chemMat);
+      group.add(bottle);
 
-      const cap = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.07, 0.07, 0.06, 12),
-        new THREE.MeshStandardMaterial({ color: 0x1c1917, roughness: 0.5 })
-      );
-      cap.position.y = 0.16;
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.08, 8), this.chemCapMat);
+      cap.position.set(0, 0.22, 0);
       group.add(cap);
 
-      const light = new THREE.PointLight(0x84cc16, 1.1, 3.5);
-      group.add(light);
-
+      if (this.enableLights) {
+        group.add(new THREE.PointLight(0x84cc16, 0.6, 2.5));
+      }
     } else if (type === 'parts') {
-      // Machined precision weapon components / barrel
-      const barrelPart = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.06, 0.06, 0.38, 12),
-        new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.95, roughness: 0.2 })
-      );
-      barrelPart.rotation.z = Math.PI / 3;
-      group.add(barrelPart);
+      const box = new THREE.Mesh(this.partsBoxGeo, this.partsMat1);
+      group.add(box);
 
-      const gear = new THREE.Mesh(
-        new THREE.TorusGeometry(0.1, 0.03, 8, 16),
-        new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.9, roughness: 0.2 })
-      );
-      gear.position.set(0, 0.05, 0);
-      group.add(gear);
+      const indicator = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.04, 0.06), this.partsMat2);
+      indicator.position.set(0, 0.06, 0);
+      group.add(indicator);
 
-      const light = new THREE.PointLight(0xeab308, 1.2, 4);
-      group.add(light);
-
+      if (this.enableLights) {
+        group.add(new THREE.PointLight(0x0284c7, 0.6, 2.5));
+      }
     } else if (type === 'blueprint') {
-      // Technical blueprint blueprint document cylinder / roll
-      const roll = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.08, 0.08, 0.42, 16),
-        new THREE.MeshStandardMaterial({
-          color: 0x1d4ed8,
-          emissive: 0x1e40af,
-          emissiveIntensity: 0.5,
-          roughness: 0.4,
-        })
-      );
-      roll.rotation.x = Math.PI / 4;
-      group.add(roll);
+      const tube = new THREE.Mesh(this.tubeGeo, this.bpTubeMat);
+      tube.rotation.z = Math.PI / 3;
+      group.add(tube);
 
-      const band = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.085, 0.085, 0.08, 16),
-        new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.5 })
-      );
-      band.rotation.x = Math.PI / 4;
-      group.add(band);
+      const cap1 = new THREE.Mesh(this.tubeCapGeo, this.bpCapMat);
+      cap1.position.set(-0.22, -0.12, 0);
+      group.add(cap1);
 
-      const light = new THREE.PointLight(0x3b82f6, 1.4, 4.5);
-      group.add(light);
+      const cap2 = new THREE.Mesh(this.tubeCapGeo, this.bpCapMat);
+      cap2.position.set(0.22, 0.12, 0);
+      group.add(cap2);
 
-    } else {
-      // Weapon crate/item
-      const weaponCrate = new THREE.Mesh(
-        new THREE.BoxGeometry(0.6, 0.25, 0.25),
-        new THREE.MeshStandardMaterial({ color: 0x9333ea, metalness: 0.8, roughness: 0.2 })
-      );
-      group.add(weaponCrate);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.02, 6, 12), this.bpRingMat);
+      group.add(ring);
 
-      const light = new THREE.PointLight(0xc084fc, 1.2, 4);
-      group.add(light);
+      if (this.enableLights) {
+        group.add(new THREE.PointLight(0x3b82f6, 0.6, 2.5));
+      }
     }
 
     this.scene.add(group);
@@ -226,17 +197,19 @@ export class PickupManager {
         continue;
       }
 
-      // Bobbing and rotating
-      p.mesh.rotation.y += delta * 1.8;
-      p.mesh.position.y = p.baseY + Math.sin(time * 3 + i) * 0.12;
-
       // Distance to player
       const dx = playerPos.x - p.mesh.position.x;
       const dz = playerPos.z - p.mesh.position.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
+      const distSq = dx * dx + dz * dz;
 
-      // Collect radius (2.2m)
-      if (dist < 2.2) {
+      // Bobbing and rotating (only calculate bobbing if within 35m)
+      if (distSq < 1225) {
+        p.mesh.rotation.y += delta * 1.8;
+        p.mesh.position.y = p.baseY + Math.sin(time * 3 + i) * 0.12;
+      }
+
+      // Collect radius (2.2m -> distSq < 4.84)
+      if (distSq < 4.84) {
         const accepted = onPickup(p.data);
         if (accepted) {
           p.data.pickedUp = true;
@@ -255,9 +228,9 @@ export class PickupManager {
   }
 
   public clearAll() {
-    this.pickups.forEach((p) => {
-      this.scene.remove(p.mesh);
-    });
+    for (let i = 0; i < this.pickups.length; i++) {
+      this.scene.remove(this.pickups[i].mesh);
+    }
     this.pickups = [];
   }
 }

@@ -80,7 +80,7 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
 }) => {
   // Joystick Touch State
   const joystickRef = useRef<HTMLDivElement>(null);
-  const [joystickPos, setJoystickPos] = useState({ x: 0, y: 0 });
+  const knobRef = useRef<HTMLDivElement>(null);
   const [isJoystickActive, setIsJoystickActive] = useState(false);
   const joystickTouchIdRef = useRef<number | null>(null);
   const joystickOriginRef = useRef<{ x: number; y: number } | null>(null);
@@ -124,7 +124,9 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
       if (touch.identifier === joystickTouchIdRef.current) {
         joystickTouchIdRef.current = null;
         joystickOriginRef.current = null;
-        setJoystickPos({ x: 0, y: 0 });
+        if (knobRef.current) {
+          knobRef.current.style.transform = 'translate3d(0px, 0px, 0px)';
+        }
         setIsJoystickActive(false);
         onMove(0, 0);
         break;
@@ -155,8 +157,12 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
       normY = -clampedY / maxRadius; // inverted because screen Y points down
     }
 
-    setJoystickPos({ x: clampedX, y: clampedY });
-    setIsJoystickActive(true);
+    if (knobRef.current) {
+      knobRef.current.style.transform = `translate3d(${clampedX}px, ${clampedY}px, 0px)`;
+    }
+    if (!isJoystickActive) {
+      setIsJoystickActive(true);
+    }
     onMove(normX, normY);
   };
 
@@ -240,15 +246,17 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
 
           {/* Draggable Stick Knob */}
           <div
+            ref={knobRef}
             id="joystick-knob"
-            className={`flex h-14 w-14 items-center justify-center rounded-full border border-cyan-300 shadow-lg transition-transform ${
+            className={`flex h-14 w-14 items-center justify-center rounded-full border border-cyan-300 shadow-lg ${
               isJoystickActive
                 ? 'bg-cyan-500/90 shadow-cyan-500/50 scale-105'
                 : 'bg-cyan-600/60 shadow-cyan-900/40'
             }`}
             style={{
-              transform: `translate(${joystickPos.x}px, ${joystickPos.y}px)`,
+              transform: 'translate3d(0px, 0px, 0px)',
               transition: isJoystickActive ? 'none' : 'transform 0.15s ease-out',
+              willChange: 'transform',
             }}
           >
             <Compass className="h-6 w-6 text-white/90" />

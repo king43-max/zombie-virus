@@ -28,6 +28,8 @@ import {
   WeaponModState,
 } from '../types/game';
 import { AudioLogManager } from './AudioLogs';
+import { PerformanceManager, QualityConfig } from './PerformanceManager';
+import { SpatialObstacleGrid } from './SpatialGrid';
 import {
   INITIAL_SKILL_TREE_STATE,
   applySkillUpgrade,
@@ -203,6 +205,26 @@ export class GameEngine {
   private lastTime = performance.now();
   private keys: Record<string, boolean> = {};
 
+  // Performance & Optimization
+  public performanceManager: PerformanceManager;
+  private obstacleGrid: SpatialObstacleGrid;
+  private nearbyObstaclesBuffer: WorldObstacle[] = [];
+  private animFrameId: number | null = null;
+  private lastInteractPrompt: string | null = null;
+  private devMonitorEl: HTMLDivElement | null = null;
+  private lastDevMonitorUpdate: number = 0;
+
+  // Bound event listener references for leak-free disposal
+  private handleKeyDown!: (e: KeyboardEvent) => void;
+  private handleKeyUp!: (e: KeyboardEvent) => void;
+  private handleMouseDown!: (e: MouseEvent) => void;
+  private handleMouseUp!: (e: MouseEvent) => void;
+  private handleMouseMove!: (e: MouseEvent) => void;
+  private handleWheel!: (e: WheelEvent) => void;
+  private handleContextMenu!: (e: MouseEvent) => void;
+  private handlePointerLockChange!: () => void;
+  private handlePointerLockError!: () => void;
+
   constructor(container: HTMLElement, callbacks: GameEngineCallbacks) {
     this.container = container;
     this.callbacks = callbacks;
@@ -271,12 +293,19 @@ export class GameEngine {
       200
     );
 
+    // Performance Manager (Device detection & dynamic tier controller)
+    this.performanceManager = new PerformanceManager((config) => this.applyQualityConfig(config));
+
     // Renderer
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: !this.performanceManager.isMobile,
+      powerPreference: 'high-performance',
+      precision: this.performanceManager.isMobile ? 'mediump' : 'highp',
+    });
     this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.performanceManager.config.maxDPR));
+    this.renderer.shadowMap.enabled = this.performanceManager.config.shadowsEnabled;
+    this.renderer.shadowMap.type = this.performanceManager.isMobile ? THREE.BasicShadowMap : THREE.PCFSoftShadowMap;
     this.container.appendChild(this.renderer.domElement);
 
     // Particles
@@ -284,6 +313,9 @@ export class GameEngine {
 
     // Environment
     this.envData = buildEnvironment(this.scene);
+
+    // Spatial partitioning for ultra-fast obstacle queries
+    this.obstacleGrid = new SpatialObstacleGrid(this.envData.obstacles, 10, 80);
 
     // Subsystems
     this.zombieManager = new ZombieManager(this.scene, this.particles);
@@ -315,6 +347,10 @@ export class GameEngine {
     this.camera.add(this.weaponMeshGroup);
     this.scene.add(this.camera);
 
+    // Apply device quality configuration
+    this.applyQualityConfig(this.performanceManager.config);
+    this.initDevMonitor();
+
     this.switchWeapon(this.activeWeaponId);
     this.notifyMaterialsUpdate();
     this.notifyTrapUpdate();
@@ -335,8 +371,13 @@ export class GameEngine {
   private setupEventListeners() {
     window.addEventListener('resize', this.onWindowResize);
 
-    document.addEventListener('keydown', (e) => {
+    this.handleKeyDown = (e: KeyboardEvent) => {
       this.keys[e.code] = true;
+
+      // Developer Performance Monitor Toggle (F3 or Backquote/Tilde)
+      if (e.code === 'F3' || e.code === 'Backquote') {
+        this.performanceManager.toggleDevMonitor();
+      }
 
       // Weapon hotkeys
       if (e.code === 'Digit1') this.switchWeapon('pistol');
@@ -407,14 +448,14 @@ export class GameEngine {
       if (e.code === 'KeyE') {
         this.handleInteraction();
       }
-    });
+    };
 
-    document.addEventListener('keyup', (e) => {
+    this.handleKeyUp = (e: KeyboardEvent) => {
       this.keys[e.code] = false;
-    });
+    };
 
     // Mouse Controls
-    this.container.addEventListener('mousedown', (e) => {
+    this.handleMouseDown = (e: MouseEvent) => {
       if (e.button === 0) {
         // Left click: If placing trap, confirm placement
         if (this.trapManager.isPlacing) {
@@ -439,21 +480,20 @@ export class GameEngine {
         // Right click ADS
         this.isAimingDownSights = true;
       }
-    });
+    };
 
-    window.addEventListener('mouseup', (e) => {
+    this.handleMouseUp = (e: MouseEvent) => {
       if (e.button === 0) {
         this.isFiring = false;
       } else if (e.button === 2) {
         this.isAimingDownSights = false;
       }
-    });
+    };
 
-    // Context menu prevent
-    this.container.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.handleContextMenu = (e: MouseEvent) => e.preventDefault();
 
     // Mouse movement with smooth target look and proportional ADS precision
-    window.addEventListener('mousemove', (e) => {
+    this.handleMouseMove = (e: MouseEvent) => {
       if (this.isPointerLocked) {
         const adsFactor = this.isAimingDownSights ? 0.62 : 1.0;
         const sens = this.settings.mouseSensitivity * adsFactor;
@@ -466,10 +506,10 @@ export class GameEngine {
           this.trapManager.updatePlacementPreview(this.camera, this.playerPos);
         }
       }
-    });
+    };
 
     // Mouse wheel weapon switch
-    this.container.addEventListener('wheel', (e) => {
+    this.handleWheel = (e: WheelEvent) => {
       const idx = this.inventory.indexOf(this.activeWeaponId);
       if (e.deltaY > 0) {
         const nextIdx = (idx + 1) % this.inventory.length;
@@ -478,16 +518,99 @@ export class GameEngine {
         const prevIdx = (idx - 1 + this.inventory.length) % this.inventory.length;
         this.switchWeapon(this.inventory[prevIdx]);
       }
-    });
+    };
 
-    // Pointer Lock Listener
-    document.addEventListener('pointerlockchange', () => {
+    this.handlePointerLockChange = () => {
       this.isPointerLocked = document.pointerLockElement === this.container;
-    });
+    };
 
-    document.addEventListener('pointerlockerror', () => {
+    this.handlePointerLockError = () => {
       // Silently handle pointer lock browser restrictions
-    });
+    };
+
+    document.addEventListener('keydown', this.handleKeyDown);
+    document.addEventListener('keyup', this.handleKeyUp);
+    this.container.addEventListener('mousedown', this.handleMouseDown);
+    window.addEventListener('mouseup', this.handleMouseUp);
+    this.container.addEventListener('contextmenu', this.handleContextMenu);
+    window.addEventListener('mousemove', this.handleMouseMove);
+    this.container.addEventListener('wheel', this.handleWheel);
+    document.addEventListener('pointerlockchange', this.handlePointerLockChange);
+    document.addEventListener('pointerlockerror', this.handlePointerLockError);
+  }
+
+  private initDevMonitor() {
+    this.devMonitorEl = document.createElement('div');
+    this.devMonitorEl.id = 'dev-perf-monitor';
+    this.devMonitorEl.style.cssText = `
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 9999;
+      background: rgba(10, 15, 24, 0.88);
+      border: 1px solid rgba(34, 197, 94, 0.5);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      color: #4ade80;
+      pointer-events: none;
+      user-select: none;
+      display: none;
+      white-space: pre;
+    `;
+    this.container.appendChild(this.devMonitorEl);
+  }
+
+  public togglePerformanceMonitor(): boolean {
+    return this.performanceManager.toggleDevMonitor();
+  }
+
+  public applyQualityConfig(config: QualityConfig) {
+    if (!this.renderer) return;
+
+    // Viewport resolution & pixel ratio
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, config.maxDPR));
+
+    // Shadow rendering
+    this.renderer.shadowMap.enabled = config.shadowsEnabled;
+
+    if (this.envData?.moonLight) {
+      this.envData.moonLight.castShadow = config.shadowsEnabled;
+      if (this.envData.moonLight.shadow?.map) {
+        this.envData.moonLight.shadow.mapSize.set(config.directionalShadowMapSize, config.directionalShadowMapSize);
+      }
+    }
+
+    if (this.envData?.streetLights) {
+      for (let i = 0; i < this.envData.streetLights.length; i++) {
+        this.envData.streetLights[i].castShadow = config.streetLightShadows;
+      }
+    }
+
+    if (this.flashlight) {
+      this.flashlight.castShadow = config.flashlightShadows;
+      if (this.flashlight.shadow?.map) {
+        this.flashlight.shadow.mapSize.set(config.flashlightShadowMapSize, config.flashlightShadowMapSize);
+      }
+    }
+
+    // Particle pool limits
+    if (this.particles) {
+      this.particles.setQuality(config.particleLimit, config.particleMultiplier);
+    }
+
+    // Zombie AI throttling & max counts
+    if (this.zombieManager) {
+      this.zombieManager.setQuality(config);
+    }
+
+    // Pickup lights
+    if (this.pickupManager) {
+      this.pickupManager.enableLights = config.enablePickupPointLights;
+    }
   }
 
   public requestPointerLock() {
@@ -1454,11 +1577,38 @@ export class GameEngine {
 
   private animate = () => {
     if (!this.isRunning) return;
-    requestAnimationFrame(this.animate);
+    this.animFrameId = requestAnimationFrame(this.animate);
 
     const now = performance.now();
-    const delta = Math.min((now - this.lastTime) / 1000, 0.1);
+    const delta = Math.min(Math.max((now - this.lastTime) / 1000, 0.001), 0.1);
     this.lastTime = now;
+
+    // Subsystem metrics for mobile dynamic scaling
+    const activeZombies = this.zombieManager.getAliveZombies().length;
+    const activeParticles = this.particles.particles.length;
+
+    // Performance adaptive quality step
+    this.performanceManager.update(delta, activeZombies, activeParticles);
+
+    // Update camera frustum for zombie & object culling
+    this.zombieManager.updateCameraFrustum(this.camera);
+
+    // Update Developer Performance Monitor if active
+    if (this.performanceManager.showDevMonitor && this.devMonitorEl) {
+      this.devMonitorEl.style.display = 'block';
+      if (now - this.lastDevMonitorUpdate > 150) {
+        this.lastDevMonitorUpdate = now;
+        const pm = this.performanceManager;
+        this.devMonitorEl.innerText =
+          `FPS: ${pm.fps.toFixed(1)} (${pm.frameTimeMs.toFixed(1)}ms)\n` +
+          `Zombies: ${activeZombies} | Particles: ${activeParticles}\n` +
+          `Quality: ${pm.config.label} (Tier ${pm.currentTier})\n` +
+          `DPR: ${this.renderer.getPixelRatio().toFixed(2)} | Target: ${pm.targetFPS} FPS\n` +
+          `Device: ${pm.isLowEnd ? 'Mobile (Low-End)' : pm.isMobile ? 'Mobile' : 'Desktop'}`;
+      }
+    } else if (this.devMonitorEl && this.devMonitorEl.style.display !== 'none') {
+      this.devMonitorEl.style.display = 'none';
+    }
 
     // 1. Smooth Camera Rotation & Angular Velocity
     const rotSmooth = Math.min(1, delta * 42);
@@ -1617,12 +1767,15 @@ export class GameEngine {
 
     this.scratchBoxSize.set(playerRadius * 2, playerHeight, playerRadius * 2);
 
+    // Query nearby obstacles using spatial grid
+    this.obstacleGrid.queryNearby(newX, newZ, this.nearbyObstaclesBuffer);
+
     // Test X movement
     this.scratchBoxCenter.set(newX, this.playerPos.y + playerHeight * 0.5, this.playerPos.z);
     this.scratchBoxX.setFromCenterAndSize(this.scratchBoxCenter, this.scratchBoxSize);
     let collidesX = false;
-    for (let o = 0; o < this.envData.obstacles.length; o++) {
-      if (this.envData.obstacles[o].box.intersectsBox(this.scratchBoxX)) {
+    for (let o = 0; o < this.nearbyObstaclesBuffer.length; o++) {
+      if (this.nearbyObstaclesBuffer[o].box.intersectsBox(this.scratchBoxX)) {
         collidesX = true;
         break;
       }
@@ -1632,8 +1785,8 @@ export class GameEngine {
     this.scratchBoxCenter.set(this.playerPos.x, this.playerPos.y + playerHeight * 0.5, newZ);
     this.scratchBoxZ.setFromCenterAndSize(this.scratchBoxCenter, this.scratchBoxSize);
     let collidesZ = false;
-    for (let o = 0; o < this.envData.obstacles.length; o++) {
-      if (this.envData.obstacles[o].box.intersectsBox(this.scratchBoxZ)) {
+    for (let o = 0; o < this.nearbyObstaclesBuffer.length; o++) {
+      if (this.nearbyObstaclesBuffer[o].box.intersectsBox(this.scratchBoxZ)) {
         collidesZ = true;
         break;
       }
@@ -1911,8 +2064,9 @@ export class GameEngine {
     this.activeInteractable = closestPoint;
     this.activeHazard = closestHazard;
 
+    let prompt: string | null = null;
     if (closestHazard && closestHazard.promptLabel) {
-      this.callbacks.onInteractPrompt(closestHazard.promptLabel);
+      prompt = closestHazard.promptLabel;
     } else if (closestPoint) {
       if (closestPoint.type === 'audio_log' && closestPoint.audioLogId) {
         const log = this.audioLogManager.getLogById(closestPoint.audioLogId);
@@ -1922,21 +2076,28 @@ export class GameEngine {
           this.audioLogManager.activePlayback.isPlaying;
 
         if (isPlaying) {
-          this.callbacks.onInteractPrompt(`[E] Stop Audio Log #${log?.number}`);
+          prompt = `[E] Stop Audio Log #${log?.number}`;
         } else if (log?.discovered) {
-          this.callbacks.onInteractPrompt(`[E] Replay Audio Log #${log?.number}: "${log?.title}"`);
+          prompt = `[E] Replay Audio Log #${log?.number}: "${log?.title}"`;
         } else {
-          this.callbacks.onInteractPrompt(`[E] Play Audio Log #${log?.number}: "${log?.title}"`);
+          prompt = `[E] Play Audio Log #${log?.number}: "${log?.title}"`;
         }
       } else {
-        this.callbacks.onInteractPrompt(closestPoint.label);
+        prompt = closestPoint.label;
       }
-    } else {
-      this.callbacks.onInteractPrompt(null);
+    }
+
+    if (prompt !== this.lastInteractPrompt) {
+      this.lastInteractPrompt = prompt;
+      this.callbacks.onInteractPrompt(prompt);
     }
   }
 
   public restartGame() {
+    if (this.animFrameId !== null) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = null;
+    }
     const maxHpBonus = getMaxHealthBonus(this.skillTreeState.ranks);
     this.stats = {
       health: 100 + maxHpBonus,
@@ -2020,6 +2181,10 @@ export class GameEngine {
   }
 
   public continueEndless() {
+    if (this.animFrameId !== null) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = null;
+    }
     this.isRunning = true;
     this.startWave(this.wave + 1);
     this.requestPointerLock();
@@ -2050,10 +2215,36 @@ export class GameEngine {
 
   public dispose() {
     this.isRunning = false;
+    if (this.animFrameId !== null) {
+      cancelAnimationFrame(this.animFrameId);
+      this.animFrameId = null;
+    }
     soundManager.stopAmbient();
     this.audioLogManager.cleanup();
     this.hazardManager.clearAll();
+    this.zombieManager.clearAll();
+    this.pickupManager.clearAll();
+    this.particles.clearAll();
+
+    // Clean up all DOM event listeners
     window.removeEventListener('resize', this.onWindowResize);
+    document.removeEventListener('keydown', this.handleKeyDown);
+    document.removeEventListener('keyup', this.handleKeyUp);
+    if (this.container) {
+      this.container.removeEventListener('mousedown', this.handleMouseDown);
+      this.container.removeEventListener('contextmenu', this.handleContextMenu);
+      this.container.removeEventListener('wheel', this.handleWheel);
+    }
+    window.removeEventListener('mouseup', this.handleMouseUp);
+    window.removeEventListener('mousemove', this.handleMouseMove);
+    document.removeEventListener('pointerlockchange', this.handlePointerLockChange);
+    document.removeEventListener('pointerlockerror', this.handlePointerLockError);
+
+    // Remove dev performance monitor overlay
+    if (this.devMonitorEl && this.devMonitorEl.parentNode) {
+      this.devMonitorEl.parentNode.removeChild(this.devMonitorEl);
+    }
+
     this.renderer.dispose();
     if (this.renderer.domElement.parentNode) {
       this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);

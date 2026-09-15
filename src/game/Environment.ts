@@ -21,6 +21,7 @@ export interface EnvironmentData {
   obstacles: WorldObstacle[];
   interactivePoints: InteractivePoint[];
   streetLights: THREE.SpotLight[];
+  moonLight: THREE.DirectionalLight;
   spawnPoints: THREE.Vector3[];
   extractionPoint: THREE.Vector3;
   fog: THREE.FogExp2;
@@ -715,6 +716,7 @@ export function buildEnvironment(scene: THREE.Scene): EnvironmentData {
     obstacles,
     interactivePoints,
     streetLights,
+    moonLight,
     spawnPoints,
     extractionPoint,
     fog,

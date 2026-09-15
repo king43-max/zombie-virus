@@ -3,6 +3,8 @@ import { soundManager } from '../audio/SoundManager';
 import { ZombieData, ZombieType } from '../types/game';
 import { WorldObstacle } from './Environment';
 import { ParticleSystem } from './Particles';
+import { SpatialObstacleGrid, ZombieSpatialHash } from './SpatialGrid';
+import { QualityConfig, QUALITY_CONFIGS } from './PerformanceManager';
 
 // Reusable scratch objects to eliminate GC pauses during zombie simulation
 const _tempBox = new THREE.Box3();
@@ -10,6 +12,7 @@ const _tempBoxX = new THREE.Box3();
 const _tempBoxZ = new THREE.Box3();
 const _tempCenter = new THREE.Vector3();
 const _tempSize = new THREE.Vector3(0.8, 1.8, 0.8);
+const _nearbyObstacles: WorldObstacle[] = [];
 
 export interface ZombieInstance {
   data: ZombieData;
@@ -25,13 +28,26 @@ export interface ZombieInstance {
   isAttacking: boolean;
   attackAnimProgress: number;
   hitFlashTime: number;
+  lastMoveDirX: number;
+  lastMoveDirZ: number;
+  internalIndex: number;
 }
 
 export class ZombieManager {
   private scene: THREE.Scene;
   private zombies: ZombieInstance[] = [];
   private obstacles: WorldObstacle[] = [];
+  private obstacleGrid: SpatialObstacleGrid | null = null;
+  private zombieSpatialHash: ZombieSpatialHash = new ZombieSpatialHash(3.5);
   private particles: ParticleSystem;
+
+  // Performance / Quality thresholds
+  public qualityConfig: QualityConfig = QUALITY_CONFIGS[3];
+  private frameCounter: number = 0;
+
+  // Frustum for off-screen culling
+  private cameraFrustum: THREE.Frustum = new THREE.Frustum();
+  private projScreenMatrix: THREE.Matrix4 = new THREE.Matrix4();
 
   // Materials cache
   private skinWalkerMat = new THREE.MeshStandardMaterial({ color: 0x475846, roughness: 0.85 });
@@ -48,6 +64,16 @@ export class ZombieManager {
 
   public setObstacles(obstacles: WorldObstacle[]) {
     this.obstacles = obstacles;
+    this.obstacleGrid = new SpatialObstacleGrid(obstacles, 10, 80);
+  }
+
+  public setQuality(config: QualityConfig) {
+    this.qualityConfig = config;
+  }
+
+  public updateCameraFrustum(camera: THREE.Camera) {
+    this.projScreenMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.cameraFrustum.setFromProjectionMatrix(this.projScreenMatrix);
   }
 
   public spawnZombie(type: ZombieType, position: THREE.Vector3): ZombieInstance {
@@ -79,6 +105,7 @@ export class ZombieManager {
     }
 
     const materials = [skinMat, clothesMat];
+    const enableShadows = this.qualityConfig.shadowsEnabled && this.qualityConfig.tier >= 2;
 
     // --- ARTICULATED HIERARCHY ---
     // Root Torso
@@ -88,8 +115,8 @@ export class ZombieManager {
       clothesMat
     );
     torso.position.y = 1.15 * scale;
-    torso.castShadow = true;
-    torso.receiveShadow = true;
+    torso.castShadow = enableShadows;
+    torso.receiveShadow = false;
     (torso as unknown as { isZombieBody: boolean }).isZombieBody = true;
     group.add(torso);
 
@@ -97,7 +124,7 @@ export class ZombieManager {
     const headSize = 0.32 * scale;
     const head = new THREE.Mesh(new THREE.BoxGeometry(headSize, headSize, headSize), skinMat);
     head.position.y = 0.55 * scale;
-    head.castShadow = true;
+    head.castShadow = false;
     (head as unknown as { isZombieHead: boolean }).isZombieHead = true;
     torso.add(head);
 
@@ -118,7 +145,7 @@ export class ZombieManager {
       skinMat
     );
     leftArmMesh.position.y = -0.28 * scale;
-    leftArmMesh.castShadow = true;
+    leftArmMesh.castShadow = false;
     leftArm.add(leftArmMesh);
     torso.add(leftArm);
 
@@ -130,7 +157,7 @@ export class ZombieManager {
       skinMat
     );
     rightArmMesh.position.y = -0.28 * scale;
-    rightArmMesh.castShadow = true;
+    rightArmMesh.castShadow = false;
     rightArm.add(rightArmMesh);
     torso.add(rightArm);
 
@@ -142,7 +169,7 @@ export class ZombieManager {
       clothesMat
     );
     leftLegMesh.position.y = -0.36 * scale;
-    leftLegMesh.castShadow = true;
+    leftLegMesh.castShadow = false;
     leftLeg.add(leftLegMesh);
     group.add(leftLeg);
 
@@ -154,7 +181,7 @@ export class ZombieManager {
       clothesMat
     );
     rightLegMesh.position.y = -0.36 * scale;
-    rightLegMesh.castShadow = true;
+    rightLegMesh.castShadow = false;
     rightLeg.add(rightLegMesh);
     group.add(rightLeg);
 
@@ -189,6 +216,9 @@ export class ZombieManager {
       isAttacking: false,
       attackAnimProgress: 0,
       hitFlashTime: 0,
+      lastMoveDirX: 0,
+      lastMoveDirZ: 0,
+      internalIndex: this.zombies.length,
     };
 
     // Store reference for raycasting
@@ -211,6 +241,20 @@ export class ZombieManager {
     onPlayerDamage: (damage: number) => void
   ) {
     const now = performance.now() / 1000;
+    this.frameCounter++;
+
+    // 1. Spatial partitioning: populate spatial grid with all alive zombies once per frame
+    this.zombieSpatialHash.clear();
+    for (let i = 0; i < this.zombies.length; i++) {
+      const z = this.zombies[i];
+      if (!z.data.isDead) {
+        this.zombieSpatialHash.insert(z);
+      }
+    }
+
+    const fullDist = this.qualityConfig.zombieFullUpdateDistance;
+    const throttleDist = this.qualityConfig.zombieThrottleDistance;
+    const animLimbsDist = this.qualityConfig.zombieAnimateLimbsDistance;
 
     for (let i = this.zombies.length - 1; i >= 0; i--) {
       const z = this.zombies[i];
@@ -218,12 +262,10 @@ export class ZombieManager {
       // Dead zombie animation & despawn
       if (z.data.isDead) {
         z.data.deathTime += delta;
-        // Fall over backward
         z.group.rotation.x = THREE.MathUtils.lerp(z.group.rotation.x, -Math.PI / 2, delta * 6);
         z.group.position.y = THREE.MathUtils.lerp(z.group.position.y, 0.1, delta * 4);
 
         if (z.data.deathTime > 2.5) {
-          // Despawn
           this.scene.remove(z.group);
           this.zombies.splice(i, 1);
         }
@@ -234,18 +276,17 @@ export class ZombieManager {
       if (z.hitFlashTime > 0) {
         z.hitFlashTime -= delta;
         if (z.hitFlashTime <= 0) {
-          z.materials.forEach((mat) => {
-            mat.emissive.set(0x000000);
-          });
+          for (let m = 0; m < z.materials.length; m++) {
+            z.materials[m].emissive.set(0x000000);
+          }
         }
       }
 
       // Status Effects: Burning & Shock DOT
       if (z.data.burningTimer && z.data.burningTimer > 0) {
         z.data.burningTimer -= delta;
-        const burnDmg = 25 * delta;
-        z.data.health -= burnDmg;
-        if (Math.random() < 0.25) {
+        z.data.health -= 25 * delta;
+        if (Math.random() < 0.2) {
           this.particles.emitFlameSpray(z.group.position, new THREE.Vector3(0, 1, 0), 1);
         }
         if (z.data.health <= 0 && !z.data.isDead) {
@@ -257,9 +298,8 @@ export class ZombieManager {
 
       if (z.data.shockTimer && z.data.shockTimer > 0) {
         z.data.shockTimer -= delta;
-        const shockDmg = 35 * delta;
-        z.data.health -= shockDmg;
-        if (Math.random() < 0.25) {
+        z.data.health -= 35 * delta;
+        if (Math.random() < 0.2) {
           this.particles.emitSparks(z.group.position, new THREE.Vector3(0, 1, 0), 2);
         }
         if (z.data.health <= 0 && !z.data.isDead) {
@@ -272,18 +312,39 @@ export class ZombieManager {
       // Distance to player
       const dx = playerPos.x - z.group.position.x;
       const dz = playerPos.z - z.group.position.z;
-      const distToPlayer = Math.sqrt(dx * dx + dz * dz);
+      const distSq = dx * dx + dz * dz;
+      const distToPlayer = Math.sqrt(distSq);
 
-      // Look at player (Y-axis only) with smooth shortest-arc interpolation
-      const targetAngle = Math.atan2(dx, dz);
-      let angleDiff = targetAngle - z.group.rotation.y;
-      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-      z.group.rotation.y += angleDiff * Math.min(1, delta * 6.5);
+      // Distance-based update throttling:
+      // If zombie is far away, we only recalculate full steering & flocking every 2nd or 3rd frame
+      let shouldFullUpdate = true;
+      let effectiveDelta = delta;
 
-      // Periodic random groans
-      if (Math.random() < 0.003 && distToPlayer < 25) {
-        soundManager.playZombieGroan(z.data.type);
+      if (distToPlayer > throttleDist) {
+        // Very distant: calculate full AI every 3rd frame, extrapolate on other frames
+        const frameOffset = (z.internalIndex + this.frameCounter) % 3;
+        if (frameOffset !== 0) {
+          shouldFullUpdate = false;
+        } else {
+          effectiveDelta = delta * 3;
+        }
+      } else if (distToPlayer > fullDist) {
+        // Mid-distance: calculate full AI every 2nd frame
+        const frameOffset = (z.internalIndex + this.frameCounter) % 2;
+        if (frameOffset !== 0) {
+          shouldFullUpdate = false;
+        } else {
+          effectiveDelta = delta * 2;
+        }
+      }
+
+      // Look at player (Y-axis only)
+      if (shouldFullUpdate) {
+        const targetAngle = Math.atan2(dx, dz);
+        let angleDiff = targetAngle - z.group.rotation.y;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        z.group.rotation.y += angleDiff * Math.min(1, effectiveDelta * 6.5);
       }
 
       // Attack player if in close range
@@ -314,53 +375,65 @@ export class ZombieManager {
       let effectiveSpeed = z.data.speed;
       if (z.data.pinnedTimer && z.data.pinnedTimer > 0) {
         z.data.pinnedTimer -= delta;
-        effectiveSpeed = 0; // Pinned in bear trap!
+        effectiveSpeed = 0;
       } else if (z.data.slowTimer && z.data.slowTimer > 0) {
         z.data.slowTimer -= delta;
         effectiveSpeed *= (z.data.slowFactor || 0.35);
       }
 
-      // Movement towards player (if not dead and not currently locked in heavy swing)
+      // Movement towards player
       if (distToPlayer > attackRange * 0.8 && effectiveSpeed > 0) {
-        const invDist = 1 / distToPlayer;
-        let moveDirX = dx * invDist;
-        let moveDirZ = dz * invDist;
+        let normMoveX = z.lastMoveDirX;
+        let normMoveZ = z.lastMoveDirZ;
 
-        // Flocking / separation from other zombies to avoid stacking
-        let sepX = 0;
-        let sepZ = 0;
-        for (let j = 0; j < this.zombies.length; j++) {
-          if (i === j) continue;
-          const other = this.zombies[j];
-          if (other.data.isDead) continue;
-          const odx = z.group.position.x - other.group.position.x;
-          const odz = z.group.position.z - other.group.position.z;
-          const odistSq = odx * odx + odz * odz;
-          if (odistSq < 1.44 && odistSq > 0.0001) {
-            const odist = Math.sqrt(odistSq);
-            const factor = (1.2 - odist) / odist;
-            sepX += odx * factor;
-            sepZ += odz * factor;
+        if (shouldFullUpdate) {
+          const invDist = 1 / distToPlayer;
+          const moveDirX = dx * invDist;
+          const moveDirZ = dz * invDist;
+
+          // Flocking / separation using 2D Spatial Hash (checks only ~1-4 nearby zombies instead of all N!)
+          let sepX = 0;
+          let sepZ = 0;
+          const nearby = this.zombieSpatialHash.getNearbyZombies(z.group.position.x, z.group.position.z);
+          for (let j = 0; j < nearby.length; j++) {
+            const other = nearby[j];
+            if (other === z || other.data.isDead) continue;
+            const odx = z.group.position.x - other.group.position.x;
+            const odz = z.group.position.z - other.group.position.z;
+            const odistSq = odx * odx + odz * odz;
+            if (odistSq < 1.44 && odistSq > 0.0001) {
+              const odist = Math.sqrt(odistSq);
+              const factor = (1.2 - odist) / odist;
+              sepX += odx * factor;
+              sepZ += odz * factor;
+            }
           }
-        }
 
-        const totalX = moveDirX + sepX * 0.7;
-        const totalZ = moveDirZ + sepZ * 0.7;
-        const totalLen = Math.sqrt(totalX * totalX + totalZ * totalZ) || 1;
-        const normMoveX = totalX / totalLen;
-        const normMoveZ = totalZ / totalLen;
+          const totalX = moveDirX + sepX * 0.7;
+          const totalZ = moveDirZ + sepZ * 0.7;
+          const totalLen = Math.sqrt(totalX * totalX + totalZ * totalZ) || 1;
+          normMoveX = totalX / totalLen;
+          normMoveZ = totalZ / totalLen;
+          z.lastMoveDirX = normMoveX;
+          z.lastMoveDirZ = normMoveZ;
+        }
 
         const stepDist = effectiveSpeed * delta;
         const newX = z.group.position.x + normMoveX * stepDist;
         const newZ = z.group.position.z + normMoveZ * stepDist;
 
-        // Collision check against world obstacles using scratch boxes
+        // Collision check against world obstacles using Spatial Grid
+        // Instead of testing all 65 obstacles, query only the 2-5 obstacles in the 9 adjacent cells!
         _tempCenter.set(newX, 1, newZ);
         _tempBox.setFromCenterAndSize(_tempCenter, _tempSize);
 
+        const testObstacles = this.obstacleGrid
+          ? this.obstacleGrid.queryNearby(newX, newZ, _nearbyObstacles)
+          : this.obstacles;
+
         let collides = false;
-        for (let o = 0; o < this.obstacles.length; o++) {
-          if (this.obstacles[o].box.intersectsBox(_tempBox)) {
+        for (let o = 0; o < testObstacles.length; o++) {
+          if (testObstacles[o].box.intersectsBox(_tempBox)) {
             collides = true;
             break;
           }
@@ -375,8 +448,8 @@ export class ZombieManager {
           _tempCenter.set(slideX, 1, z.group.position.z);
           _tempBoxX.setFromCenterAndSize(_tempCenter, _tempSize);
           let collidesX = false;
-          for (let o = 0; o < this.obstacles.length; o++) {
-            if (this.obstacles[o].box.intersectsBox(_tempBoxX)) {
+          for (let o = 0; o < testObstacles.length; o++) {
+            if (testObstacles[o].box.intersectsBox(_tempBoxX)) {
               collidesX = true;
               break;
             }
@@ -390,8 +463,8 @@ export class ZombieManager {
           _tempCenter.set(z.group.position.x, 1, slideZ);
           _tempBoxZ.setFromCenterAndSize(_tempCenter, _tempSize);
           let collidesZ = false;
-          for (let o = 0; o < this.obstacles.length; o++) {
-            if (this.obstacles[o].box.intersectsBox(_tempBoxZ)) {
+          for (let o = 0; o < testObstacles.length; o++) {
+            if (testObstacles[o].box.intersectsBox(_tempBoxZ)) {
               collidesZ = true;
               break;
             }
@@ -401,21 +474,23 @@ export class ZombieManager {
           }
         }
 
-        // Procedural Walk Cycle Animation
-        z.animationTime += delta * z.data.speed * 2.8;
-        const legSwing = Math.sin(z.animationTime) * 0.55;
-        z.leftLeg.rotation.x = legSwing;
-        z.rightLeg.rotation.x = -legSwing;
+        // Procedural Walk Cycle Animation:
+        // Culling: Only calculate trigonometric rotations and transform matrices for limbs
+        // if the zombie is within animated distance (< 25-45m) and in camera view
+        if (distToPlayer <= animLimbsDist) {
+          z.animationTime += delta * z.data.speed * 2.8;
+          const legSwing = Math.sin(z.animationTime) * 0.55;
+          z.leftLeg.rotation.x = legSwing;
+          z.rightLeg.rotation.x = -legSwing;
 
-        if (!z.isAttacking) {
-          // Zombie classic outstretched shambling arms
-          const armBob = Math.sin(z.animationTime) * 0.2;
-          z.leftArm.rotation.x = -Math.PI / 2.3 + armBob;
-          z.rightArm.rotation.x = -Math.PI / 2.2 - armBob;
+          if (!z.isAttacking) {
+            const armBob = Math.sin(z.animationTime) * 0.2;
+            z.leftArm.rotation.x = -Math.PI / 2.3 + armBob;
+            z.rightArm.rotation.x = -Math.PI / 2.2 - armBob;
+          }
+
+          z.bodyMesh.rotation.z = Math.sin(z.animationTime * 0.5) * 0.08;
         }
-
-        // Shambling torso tilt
-        z.bodyMesh.rotation.z = Math.sin(z.animationTime * 0.5) * 0.08;
       }
     }
   }
@@ -438,9 +513,9 @@ export class ZombieManager {
 
     // Hit flash red
     zombie.hitFlashTime = 0.12;
-    zombie.materials.forEach((mat) => {
-      mat.emissive.set(0xaa2200);
-    });
+    for (let m = 0; m < zombie.materials.length; m++) {
+      zombie.materials[m].emissive.set(0xaa2200);
+    }
 
     if (zombie.data.health <= 0) {
       zombie.data.isDead = true;
@@ -477,9 +552,9 @@ export class ZombieManager {
   }
 
   public clearAll() {
-    this.zombies.forEach((z) => {
-      this.scene.remove(z.group);
-    });
+    for (let i = 0; i < this.zombies.length; i++) {
+      this.scene.remove(this.zombies[i].group);
+    }
     this.zombies = [];
   }
 }
