@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Crosshair, Flame, Hammer, LogIn, LogOut, Play, ShieldAlert, Sparkles, Trophy, User, Volume2, Wrench } from 'lucide-react';
+import { Crosshair, Flame, Hammer, Play, ShieldAlert, Sparkles, Volume2, Wrench } from 'lucide-react';
 import { soundManager } from './audio/SoundManager';
 import { GameOverModal } from './components/GameOverModal';
 import { HUD } from './components/HUD';
@@ -8,9 +8,7 @@ import { SkillTreeModal } from './components/SkillTreeModal';
 import { UpgradeStationModal } from './components/UpgradeStationModal';
 import { VictoryModal } from './components/VictoryModal';
 import { AudioLogArchiveModal } from './components/AudioLogArchiveModal';
-import { LeaderboardModal } from './components/LeaderboardModal';
 import { MobileControls } from './components/MobileControls';
-import { useFirebase } from './firebase/FirebaseContext';
 import { GameEngine } from './game/GameEngine';
 import { INITIAL_SKILL_TREE_STATE } from './game/SkillTree';
 import { INITIAL_AUDIO_LOGS } from './game/AudioLogs';
@@ -101,9 +99,7 @@ export default function App() {
   const [hitMarker, setHitMarker] = useState<'body' | 'head' | null>(null);
   const [isDamaged, setIsDamaged] = useState(false);
 
-  // Firebase & Modals
-  const { user, profile, signIn, signOut, isLoading: isFirebaseLoading } = useFirebase();
-  const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  // Modals
   const [isUpgradeOpen, setIsUpgradeOpen] = useState(false);
   const [isSkillTreeOpen, setIsSkillTreeOpen] = useState(false);
   const [isAudioLogArchiveOpen, setIsAudioLogArchiveOpen] = useState(false);
@@ -445,48 +441,6 @@ export default function App() {
               <span className="font-bold text-zinc-200">Controls:</span> WASD / Mobile Joystick Move | Mouse / Touch Aim | Shoot & ADS | Shift Sprint | Space Jump | E Interact | K Skills | L Logs | B/X/G Traps | F Flashlight | V Camera
             </div>
 
-            {/* Firebase Account & Global Leaderboard Cloud Sync */}
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/80 p-3 text-xs">
-              <button
-                id="start-leaderboard-btn"
-                onClick={() => setIsLeaderboardOpen(true)}
-                className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-950/40 px-3.5 py-2 font-bold text-amber-300 hover:bg-amber-900/50 hover:text-white transition-all shadow-sm"
-              >
-                <Trophy className="h-4 w-4 text-amber-400" />
-                <span>Global Leaderboard & Dossier</span>
-              </button>
-
-              <div className="flex items-center gap-2">
-                {isFirebaseLoading ? (
-                  <span className="text-zinc-500 text-xs">Connecting to Firebase...</span>
-                ) : user ? (
-                  <div className="flex items-center gap-2">
-                    <span className="text-zinc-400">Survivor:</span>
-                    <span className="font-bold text-white">{user.displayName || 'Survivor'}</span>
-                    {profile && (
-                      <span className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-[11px] text-amber-400">
-                        High Score: {profile.highScore.toLocaleString()}
-                      </span>
-                    )}
-                    <button
-                      onClick={() => signOut()}
-                      className="rounded bg-zinc-800 px-2 py-1 text-[11px] text-zinc-400 hover:text-white transition-colors"
-                    >
-                      Sign Out
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => signIn()}
-                    className="flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 font-bold uppercase tracking-wider text-white hover:bg-red-500 transition-all shadow-md shadow-red-950/50"
-                  >
-                    <LogIn className="h-3.5 w-3.5" />
-                    <span>Sign In With Google</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
             {/* Start Button */}
             <button
               id="start-game-btn"
@@ -556,13 +510,6 @@ export default function App() {
             setIsUpgradeOpen(false);
             setIsSkillTreeOpen(false);
             setIsAudioLogArchiveOpen(true);
-          }}
-          onOpenLeaderboard={() => {
-            if (engineRef.current) engineRef.current.exitPointerLock();
-            setIsUpgradeOpen(false);
-            setIsSkillTreeOpen(false);
-            setIsAudioLogArchiveOpen(false);
-            setIsLeaderboardOpen(true);
           }}
           touchControlsEnabled={settings.touchControls}
           onToggleTouchControls={() => handleUpdateSettings({ touchControls: !settings.touchControls })}
@@ -722,7 +669,6 @@ export default function App() {
           if (engineRef.current) engineRef.current.requestPointerLock();
         }}
         onRestart={handleRestart}
-        onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
         settings={settings}
         onUpdateSettings={handleUpdateSettings}
       />
@@ -731,8 +677,6 @@ export default function App() {
       <GameOverModal
         isOpen={isGameOver}
         onRestart={handleRestart}
-        onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
-        audioLogsCount={audioLogs.filter((l) => l.discovered).length}
         stats={finalStats}
       />
 
@@ -741,20 +685,7 @@ export default function App() {
         isOpen={isVictory}
         onContinueEndless={handleContinueEndless}
         onRestart={handleRestart}
-        onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
-        audioLogsCount={audioLogs.filter((l) => l.discovered).length}
         stats={finalStats}
-      />
-
-      {/* GLOBAL LEADERBOARD & SURVIVOR CLOUD DOSSIER MODAL */}
-      <LeaderboardModal
-        isOpen={isLeaderboardOpen}
-        onClose={() => {
-          setIsLeaderboardOpen(false);
-          if (hasStarted && !isPaused && !isGameOver && !isVictory && engineRef.current) {
-            engineRef.current.requestPointerLock();
-          }
-        }}
       />
     </div>
   );

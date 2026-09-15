@@ -1,16 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import confetti from 'canvas-confetti';
-import { Award, CheckCircle2, Crosshair, Flame, Play, RotateCcw, Skull, Trophy, LogIn, Check } from 'lucide-react';
-import { useFirebase } from '../firebase/FirebaseContext';
-import { submitLeaderboardScore } from '../firebase/leaderboard';
-import { recordGameStats } from '../firebase/userProfile';
+import { Award, CheckCircle2, Crosshair, Flame, Play, RotateCcw, Skull } from 'lucide-react';
 
 interface VictoryModalProps {
   isOpen: boolean;
   onContinueEndless: () => void;
   onRestart: () => void;
-  onOpenLeaderboard?: () => void;
-  audioLogsCount?: number;
   stats: {
     score: number;
     kills: number;
@@ -23,14 +18,8 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   isOpen,
   onContinueEndless,
   onRestart,
-  onOpenLeaderboard,
-  audioLogsCount = 0,
   stats,
 }) => {
-  const { user, signIn, refreshProfile } = useFirebase();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSubmitted, setIsSubmitted] = useState(false);
-
   useEffect(() => {
     if (isOpen) {
       confetti({
@@ -42,39 +31,6 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
   }, [isOpen]);
 
   if (!isOpen) return null;
-
-  const handleSubmitScore = async () => {
-    if (!user) {
-      await signIn();
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      await submitLeaderboardScore({
-        score: stats.score,
-        wave: stats.wave,
-        kills: stats.kills,
-        headshots: stats.headshots,
-        victory: true,
-      });
-
-      await recordGameStats({
-        score: stats.score,
-        wave: stats.wave,
-        kills: stats.kills,
-        headshots: stats.headshots,
-        audioLogsCount,
-      });
-
-      await refreshProfile();
-      setIsSubmitted(true);
-    } catch (err) {
-      console.error('Failed to submit victory run to Firebase:', err);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   return (
     <div
@@ -128,56 +84,8 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
           </div>
         </div>
 
-        {/* Firebase Cloud Leaderboard Submit Box */}
-        <div className="mt-5 rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 text-xs">
-          {isSubmitted ? (
-            <div className="flex items-center justify-center gap-1.5 font-bold text-emerald-400">
-              <Check className="h-4 w-4" />
-              <span>Victory recorded to Global Leaderboard & Cloud Dossier!</span>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between text-zinc-300">
-                <span>Quarantine Cloud Sync:</span>
-                {user ? (
-                  <span className="font-bold text-amber-400">{user.displayName || 'Survivor'}</span>
-                ) : (
-                  <span className="text-zinc-500">Not signed in</span>
-                )}
-              </div>
-              <button
-                onClick={handleSubmitScore}
-                disabled={isSubmitting}
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 py-2 font-bold uppercase tracking-wider text-white hover:bg-emerald-500 transition-all shadow-md shadow-emerald-950/40"
-              >
-                {user ? (
-                  <>
-                    <Trophy className="h-3.5 w-3.5" />
-                    <span>{isSubmitting ? 'Recording Run...' : 'Post Victory to Global Leaderboard'}</span>
-                  </>
-                ) : (
-                  <>
-                    <LogIn className="h-3.5 w-3.5" />
-                    <span>Sign In With Google & Save Career Stats</span>
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-        </div>
-
         {/* Action Buttons */}
-        <div className="mt-5 flex flex-col gap-2">
-          {onOpenLeaderboard && (
-            <button
-              onClick={onOpenLeaderboard}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 py-2.5 text-xs font-bold uppercase tracking-wider text-zinc-300 hover:bg-zinc-800 hover:text-white transition-all"
-            >
-              <Trophy className="h-4 w-4 text-amber-400" />
-              <span>View Global Leaderboard</span>
-            </button>
-          )}
-
+        <div className="mt-6 flex flex-col gap-2">
           <button
             id="continue-endless-btn"
             onClick={onContinueEndless}
@@ -200,3 +108,4 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
     </div>
   );
 };
+

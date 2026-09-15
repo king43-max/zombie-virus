@@ -1,12 +1,11 @@
 import React from 'react';
-import { Eye, Keyboard, Play, RotateCcw, Sliders, Smartphone, Trophy, Volume2, X } from 'lucide-react';
+import { Eye, Keyboard, Play, RotateCcw, Sliders, Smartphone, Volume2, X } from 'lucide-react';
 import { GameSettings } from '../types/game';
 
 interface PauseMenuProps {
   isOpen: boolean;
   onResume: () => void;
   onRestart: () => void;
-  onOpenLeaderboard?: () => void;
   settings: GameSettings;
   onUpdateSettings: (newSettings: Partial<GameSettings>) => void;
 }
@@ -15,7 +14,6 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
   isOpen,
   onResume,
   onRestart,
-  onOpenLeaderboard,
   settings,
   onUpdateSettings,
 }) => {
@@ -245,7 +243,7 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
         </div>
 
         {/* Buttons */}
-        <div className="mt-5 flex flex-wrap gap-3 border-t border-zinc-800 pt-4">
+        <div className="mt-5 flex gap-3 border-t border-zinc-800 pt-4">
           <button
             id="resume-btn"
             onClick={onResume}
@@ -254,17 +252,6 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
             <Play className="h-4 w-4" />
             <span>Resume Game</span>
           </button>
-
-          {onOpenLeaderboard && (
-            <button
-              id="pause-leaderboard-btn"
-              onClick={onOpenLeaderboard}
-              className="flex items-center justify-center gap-2 rounded-xl border border-amber-500/50 bg-amber-950/40 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-amber-300 hover:bg-amber-900/50 transition-all"
-            >
-              <Trophy className="h-4 w-4 text-amber-400" />
-              <span>Leaderboard</span>
-            </button>
-          )}
 
           <button
             id="restart-run-btn"

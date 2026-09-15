@@ -14,7 +14,6 @@ import {
   Shield,
   Smartphone,
   Sparkles,
-  Trophy,
   Wrench,
   Zap,
 } from 'lucide-react';
@@ -57,7 +56,6 @@ interface HUDProps {
   onReplayAudioLog?: () => void;
   onDismissAudioLog?: () => void;
   onOpenAudioLogArchive?: () => void;
-  onOpenLeaderboard?: () => void;
   touchControlsEnabled?: boolean;
   onToggleTouchControls?: () => void;
   onSelectWeapon: (id: WeaponId) => void;
@@ -94,7 +92,6 @@ export const HUD: React.FC<HUDProps> = ({
   onReplayAudioLog,
   onDismissAudioLog,
   onOpenAudioLogArchive,
-  onOpenLeaderboard,
   touchControlsEnabled = false,
   onToggleTouchControls,
   onSelectWeapon,
@@ -269,19 +266,6 @@ export const HUD: React.FC<HUDProps> = ({
               <span className="rounded-full bg-zinc-800 px-1.5 py-0.2 text-[10px] font-mono text-zinc-300">
                 {audioLogsDiscoveredCount}/{totalAudioLogsCount}
               </span>
-            </button>
-          )}
-
-          {/* Cloud Leaderboard & Profile Button */}
-          {onOpenLeaderboard && (
-            <button
-              id="hud-leaderboard-btn"
-              onClick={onOpenLeaderboard}
-              className="pointer-events-auto flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-black/80 px-3 py-2 text-xs font-bold text-amber-300 hover:bg-zinc-800 hover:text-white transition-all shadow-sm"
-              title="Global Cloud Leaderboard & Survivor Dossier"
-            >
-              <Trophy className="h-3.5 w-3.5 text-amber-400" />
-              <span>RANKS</span>
             </button>
           )}
 

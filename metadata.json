@@ -1,6 +1,6 @@
 {
   "name": "3D Zombie Survival",
-  "description": "An atmospheric 3D zombie survival game featuring Firebase authentication, cloud career statistics, global quarantine leaderboard, mobile touch controls, wave combat, weapon crafting, placeable traps, and extraction.",
+  "description": "An atmospheric 3D zombie survival game featuring mobile touch controls, wave combat, scavenged weapon crafting, placeable tactical traps, passive skill tree progression, collectible audio logs lore, interactive hazards, and evacuation.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

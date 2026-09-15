@@ -1,14 +1,9 @@
-import React, { useState } from 'react';
-import { Award, Crosshair, Flame, RotateCcw, Skull, Trophy, LogIn, Check } from 'lucide-react';
-import { useFirebase } from '../firebase/FirebaseContext';
-import { submitLeaderboardScore } from '../firebase/leaderboard';
-import { recordGameStats } from '../firebase/userProfile';
+import React from 'react';
+import { Award, Crosshair, Flame, RotateCcw, Skull } from 'lucide-react';
 
 interface GameOverModalProps {
   isOpen: boolean;
   onRestart: () => void;
-  onOpenLeaderboard?: () => void;
-  audioLogsCount?: number;
   stats: {
     score: number;
     kills: number;
@@ -20,48 +15,9 @@ interface GameOverModalProps {
 export const GameOverModal: React.FC<GameOverModalProps> = ({
   isOpen,
   onRestart,
-  onOpenLeaderboard,
-  audioLogsCount = 0,
   stats,
 }) => {
-  const { user, signIn, refreshProfile } = useFirebase();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSubmitted, setIsSubmitted] = useState(false);
-
   if (!isOpen) return null;
-
-  const handleSubmitScore = async () => {
-    if (!user) {
-      await signIn();
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      await submitLeaderboardScore({
-        score: stats.score,
-        wave: stats.wave,
-        kills: stats.kills,
-        headshots: stats.headshots,
-        victory: false,
-      });
-
-      await recordGameStats({
-        score: stats.score,
-        wave: stats.wave,
-        kills: stats.kills,
-        headshots: stats.headshots,
-        audioLogsCount,
-      });
-
-      await refreshProfile();
-      setIsSubmitted(true);
-    } catch (err) {
-      console.error('Failed to submit run to Firebase:', err);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   return (
     <div
@@ -115,56 +71,8 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
           </div>
         </div>
 
-        {/* Firebase Cloud Leaderboard Submit Box */}
-        <div className="mt-5 rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 text-xs">
-          {isSubmitted ? (
-            <div className="flex items-center justify-center gap-1.5 font-bold text-emerald-400">
-              <Check className="h-4 w-4" />
-              <span>Score recorded to Global Leaderboard & Cloud Dossier!</span>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between text-zinc-300">
-                <span>Quarantine Cloud Sync:</span>
-                {user ? (
-                  <span className="font-bold text-amber-400">{user.displayName || 'Survivor'}</span>
-                ) : (
-                  <span className="text-zinc-500">Not signed in</span>
-                )}
-              </div>
-              <button
-                onClick={handleSubmitScore}
-                disabled={isSubmitting}
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 py-2 font-bold uppercase tracking-wider text-black hover:bg-amber-400 transition-all"
-              >
-                {user ? (
-                  <>
-                    <Trophy className="h-3.5 w-3.5" />
-                    <span>{isSubmitting ? 'Recording Run...' : 'Post Score to Global Leaderboard'}</span>
-                  </>
-                ) : (
-                  <>
-                    <LogIn className="h-3.5 w-3.5" />
-                    <span>Sign In With Google & Save Career Stats</span>
-                  </>
-                )}
-              </button>
-            </div>
-          )}
-        </div>
-
         {/* Action Buttons */}
-        <div className="mt-5 flex flex-col gap-2">
-          {onOpenLeaderboard && (
-            <button
-              onClick={onOpenLeaderboard}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 bg-zinc-900 py-3 text-xs font-bold uppercase tracking-wider text-zinc-300 hover:bg-zinc-800 hover:text-white transition-all"
-            >
-              <Trophy className="h-4 w-4 text-amber-400" />
-              <span>View Global Leaderboard</span>
-            </button>
-          )}
-
+        <div className="mt-6">
           <button
             id="retry-game-btn"
             onClick={onRestart}
@@ -178,3 +86,4 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
     </div>
   );
 };
+
